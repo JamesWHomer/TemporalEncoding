@@ -141,13 +141,43 @@ def compute_temporal_encoding(timestamps: torch.Tensor,
 
 def apply_rotary_emb(x: torch.Tensor, freqs_cis: torch.Tensor) -> torch.Tensor:
     """Applies the rotary embedding to the query and key tensors."""
-    x_ = torch.view_as_complex(
-        torch.stack(torch.chunk(x.transpose(1, 2).float(), 2, dim=-1),
-                    dim=-1))
+    # Reshape x to ensure compatibility with freqs_cis
+    original_shape = x.shape
+    
+    # Get the batch dimension (could be 1 during inference or batch_size during training)
+    batch_dim = x.size(0)
+    
+    # Transpose: [batch, seq_len, heads, head_dim] -> [batch, heads, seq_len, head_dim]
+    x_transposed = x.transpose(1, 2).float()
+    
+    # Split head_dim into real and imaginary components
+    x_chunks = torch.chunk(x_transposed, 2, dim=-1)
+    x_ = torch.view_as_complex(torch.stack(x_chunks, dim=-1))
+    
+    # Adjust freqs_cis if necessary to match x_'s shape
+    if freqs_cis.dim() == 1 or (freqs_cis.dim() == 2 and x_.dim() > 2):
+        # For inference case - expand freqs_cis to match batch dim
+        if x_.size(0) > 1 and freqs_cis.size(0) == 1:
+            freqs_cis = freqs_cis.expand(x_.size(0), -1)
+    elif freqs_cis.dim() < x_.dim():
+        # Add missing dimensions if needed
+        for _ in range(x_.dim() - freqs_cis.dim()):
+            freqs_cis = freqs_cis.unsqueeze(0)
+    
+    # Apply complex multiplication
     x_out = torch.view_as_real(x_ * freqs_cis).type_as(x)
+    
+    # Convert back to original format
     x_out = torch.cat(torch.chunk(x_out, 2, dim=-1), dim=-2)
-    x_out = x_out.reshape(x_out.shape[0], x_out.shape[1], x_out.shape[2],
-                          -1).transpose(1, 2)
+    
+    # Reshape and transpose back to original format
+    # [batch, heads, seq_len, head_dim] -> [batch, seq_len, heads, head_dim]
+    x_out = x_out.reshape(*x_out.shape[:-2], -1).transpose(1, 2)
+    
+    # Ensure the output has the same shape as the input
+    if x_out.shape != original_shape:
+        x_out = x_out.reshape(original_shape)
+        
     return x_out
 
 
@@ -848,9 +878,10 @@ class GemmaTEForCausalLM(nn.Module):
         # Create positions tensor
         positions = torch.arange(0, seq_len, device=input_ids.device).expand(batch_size, -1)
         
-        # Get rotary embeddings - use contiguous().view instead of reshape to handle non-contiguous tensors
-        freqs_cis = self.freqs_cis.index_select(0, positions.contiguous().view(-1))
-        freqs_cis = freqs_cis.view(batch_size, seq_len, -1)
+        # Get rotary embeddings - simplified to match the forward pass
+        # Important: Don't reshape freqs_cis to avoid shape mismatch in apply_rotary_emb
+        kv_write_indices = positions.reshape(-1)
+        freqs_cis = self.freqs_cis.index_select(0, kv_write_indices)
         
         # Get embeddings with input ids
         hidden_states = self.embedder(input_ids)
@@ -913,8 +944,7 @@ class GemmaTEForCausalLM(nn.Module):
         hidden_states = self.model(
             hidden_states=hidden_states,
             freqs_cis=freqs_cis,
-            # Make positions contiguous explicitly before viewing
-            kv_write_indices=positions.contiguous().view(-1),
+            kv_write_indices=kv_write_indices,
             kv_caches=kv_caches,
             mask=mask,
         )
