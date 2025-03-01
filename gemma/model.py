@@ -141,44 +141,32 @@ def compute_temporal_encoding(timestamps: torch.Tensor,
 
 def apply_rotary_emb(x: torch.Tensor, freqs_cis: torch.Tensor) -> torch.Tensor:
     """Applies the rotary embedding to the query and key tensors."""
-    # Reshape x to ensure compatibility with freqs_cis
-    original_shape = x.shape
+    # Make sure we're working with float tensors for the complex operations
+    x_float = x.transpose(1, 2).float()
     
-    # Get the batch dimension (could be 1 during inference or batch_size during training)
-    batch_dim = x.size(0)
+    # Split the head dimension into real and imaginary parts
+    x_chunked = torch.chunk(x_float, 2, dim=-1)
+    x_complex = torch.view_as_complex(torch.stack(x_chunked, dim=-1))
     
-    # Transpose: [batch, seq_len, heads, head_dim] -> [batch, heads, seq_len, head_dim]
-    x_transposed = x.transpose(1, 2).float()
-    
-    # Split head_dim into real and imaginary components
-    x_chunks = torch.chunk(x_transposed, 2, dim=-1)
-    x_ = torch.view_as_complex(torch.stack(x_chunks, dim=-1))
-    
-    # Adjust freqs_cis if necessary to match x_'s shape
-    if freqs_cis.dim() == 1 or (freqs_cis.dim() == 2 and x_.dim() > 2):
-        # For inference case - expand freqs_cis to match batch dim
-        if x_.size(0) > 1 and freqs_cis.size(0) == 1:
-            freqs_cis = freqs_cis.expand(x_.size(0), -1)
-    elif freqs_cis.dim() < x_.dim():
-        # Add missing dimensions if needed
-        for _ in range(x_.dim() - freqs_cis.dim()):
-            freqs_cis = freqs_cis.unsqueeze(0)
-    
-    # Apply complex multiplication
-    x_out = torch.view_as_real(x_ * freqs_cis).type_as(x)
-    
-    # Convert back to original format
-    x_out = torch.cat(torch.chunk(x_out, 2, dim=-1), dim=-2)
-    
-    # Reshape and transpose back to original format
-    # [batch, heads, seq_len, head_dim] -> [batch, seq_len, heads, head_dim]
-    x_out = x_out.reshape(*x_out.shape[:-2], -1).transpose(1, 2)
-    
-    # Ensure the output has the same shape as the input
-    if x_out.shape != original_shape:
-        x_out = x_out.reshape(original_shape)
+    # Handle batched vs. unbatched freqs_cis
+    if freqs_cis.dim() == 1 and x_complex.dim() > 1:
+        # For training, we need to expand freqs_cis to match the sequence length
+        seq_length = x_complex.size(-2)
+        if freqs_cis.size(0) < seq_length:
+            # If we need more positions than we have in freqs_cis, something is wrong
+            raise ValueError(f"freqs_cis has fewer positions ({freqs_cis.size(0)}) than required ({seq_length})")
+        # Just use the first seq_length positions from freqs_cis
+        freqs_cis = freqs_cis[:seq_length]
         
-    return x_out
+    # Apply the rotation in complex space
+    x_out = torch.view_as_real(x_complex * freqs_cis.unsqueeze(0).unsqueeze(0))
+    
+    # Convert back to the original format
+    x_out = torch.cat(torch.chunk(x_out, 2, dim=-1), dim=-2)
+    x_out = x_out.reshape(x_out.shape[0], x_out.shape[1], x_out.shape[2], -1)
+    
+    # Return with the same dtype as the input
+    return x_out.transpose(1, 2).type_as(x)
 
 
 class Linear(nn.Module):
@@ -353,7 +341,16 @@ class GemmaTEAttention(nn.Module):
         xk = xk.view(batch_size, -1, self.num_kv_heads, self.head_dim)
         xv = xv.view(batch_size, -1, self.num_kv_heads, self.head_dim)
 
-        # Positional embedding.
+        # Positional embedding - ensure freqs_cis has the right shape
+        if freqs_cis.dim() == 1:
+            # During training, freqs_cis is a 1D tensor of input_len positions
+            # Make sure we have enough positions
+            if freqs_cis.size(0) < input_len:
+                raise ValueError(f"freqs_cis has too few positions ({freqs_cis.size(0)}) for input length {input_len}")
+            # Only use the positions we need
+            freqs_cis = freqs_cis[:input_len]
+        
+        # Apply rotary embeddings
         xq = apply_rotary_emb(xq, freqs_cis=freqs_cis)
         xk = apply_rotary_emb(xk, freqs_cis=freqs_cis)
 
@@ -875,13 +872,11 @@ class GemmaTEForCausalLM(nn.Module):
         dtype = self.config.get_dtype()
         batch_size, seq_len = input_ids.shape
         
-        # Create positions tensor
-        positions = torch.arange(0, seq_len, device=input_ids.device).expand(batch_size, -1)
+        # Create positions tensor for each position in the sequence
+        positions = torch.arange(0, seq_len, device=input_ids.device)
         
-        # Get rotary embeddings - simplified to match the forward pass
-        # Important: Don't reshape freqs_cis to avoid shape mismatch in apply_rotary_emb
-        kv_write_indices = positions.reshape(-1)
-        freqs_cis = self.freqs_cis.index_select(0, kv_write_indices)
+        # Get rotary embeddings - similar to how it's done in forward method
+        freqs_cis = self.freqs_cis.index_select(0, positions).to(input_ids.device)
         
         # Get embeddings with input ids
         hidden_states = self.embedder(input_ids)
@@ -915,8 +910,8 @@ class GemmaTEForCausalLM(nn.Module):
         if hidden_states.dtype != dtype:
             hidden_states = hidden_states.to(dtype)
             
-        # Create causal attention mask
-        mask = torch.triu(torch.full((seq_len, seq_len), -float('inf'), device=input_ids.device), diagonal=1)
+        # Create causal attention mask with the right shape for training
+        mask = torch.triu(torch.full((1, 1, seq_len, seq_len), -float('inf'), device=input_ids.device), diagonal=1)
         
         # Apply attention mask from padding if provided
         if attention_mask is not None:
@@ -924,15 +919,16 @@ class GemmaTEForCausalLM(nn.Module):
             attention_mask = attention_mask.unsqueeze(1).unsqueeze(2)
             # Convert to the format expected by the model
             attention_mask = (1.0 - attention_mask) * -1e9
-            mask = mask.unsqueeze(0) + attention_mask
-        else:
-            mask = mask.unsqueeze(0)
-            
+            mask = mask + attention_mask
+        
         # Ensure mask has the right dtype
         if mask.dtype != dtype and mask.dtype != torch.bool:
             mask = mask.to(dtype)
             
-        # Build temporary KV caches for training
+        # Build temporary KV caches for training - flatten positions for index_copy_
+        kv_write_indices = torch.arange(seq_len, device=input_ids.device)
+        
+        # Create KV caches similar to the forward pass
         kv_caches = []
         for _ in range(self.config.num_hidden_layers):
             size = (batch_size, seq_len, self.config.num_key_value_heads, self.config.head_dim)
