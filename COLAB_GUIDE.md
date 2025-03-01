@@ -106,7 +106,11 @@ weights_dir/
     └── 1.complete
 ```
 
-The `finetune.py` script has been updated to automatically find the model checkpoint inside this directory structure.
+The `finetune.py` script has been updated to handle both of these path formats:
+1. The parent directory path (`weights_dir`)
+2. The direct `/1` directory path (`weights_dir/1`)
+
+You can use either format when specifying the `--ckpt` parameter, as the code will check for model files in both locations.
 
 **Troubleshooting**:
 - If you see authentication errors, check that your Kaggle credentials are correct
@@ -136,13 +140,13 @@ For multi-turn conversations:
 
 ## Step 7: Fine-tune the Model
 
-Now you're ready to fine-tune the model:
+Now you're ready to fine-tune the model. You can use either the parent directory or the `/1` subdirectory as the `--ckpt` parameter:
 
 ```python
 # Make sure output directory exists
 !mkdir -p fine_tuned_model
 
-# Run fine-tuning script
+# Run fine-tuning script (using the main directory)
 !python scripts/finetune.py \
   --ckpt {weights_dir} \
   --data_file ./data/temporal_dataset.jsonl \
@@ -153,6 +157,18 @@ Now you're ready to fine-tune the model:
   --learning_rate 5e-5 \
   --max_length 128 \
   --sample_generation
+
+# OR using the direct /1 subdirectory:
+# !python scripts/finetune.py \
+#   --ckpt {weights_dir}/1 \
+#   --data_file ./data/temporal_dataset.jsonl \
+#   --output_dir ./fine_tuned_model \
+#   --device cuda \
+#   --batch_size 4 \
+#   --epochs 3 \
+#   --learning_rate 5e-5 \
+#   --max_length 128 \
+#   --sample_generation
 ```
 
 **Note**: Adjust the batch size based on your GPU memory. If you encounter out-of-memory errors, try reducing the batch size to 2 or 1.
@@ -237,6 +253,7 @@ If the model fails to load:
 1. Check that the weights directory path is correct
 2. Verify the actual directory structure: `!ls -la {weights_dir}` and `!ls -la {weights_dir}/1/`
 3. Make sure the model.ckpt file exists: `!ls -la {weights_dir}/1/model.ckpt`
+4. Try using the direct path to the `/1` directory as shown in Step 7 above
 
 ## Saving Your Work
 

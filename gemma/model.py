@@ -780,7 +780,17 @@ class GemmaTEForCausalLM(nn.Module):
                 )['model_state_dict'],
                 strict=False,
             )
-        # Case 2: Check for directory structure like gemma-2-2b-it/1/model.ckpt
+        # Case 2: Check if model.ckpt exists directly in the given path (when path already ends with /1)
+        elif os.path.isdir(model_path) and os.path.exists(os.path.join(model_path, 'model.ckpt')):
+            ckpt_path = os.path.join(model_path, 'model.ckpt')
+            print(f"Loading weights from checkpoint: {ckpt_path}")
+            self.load_state_dict(
+                torch.load(
+                    ckpt_path, mmap=True, weights_only=True,
+                ),
+                strict=False,
+            )
+        # Case 3: Check for directory structure like gemma-2-2b-it/1/model.ckpt
         elif os.path.isdir(model_path) and os.path.exists(os.path.join(model_path, '1', 'model.ckpt')):
             ckpt_path = os.path.join(model_path, '1', 'model.ckpt')
             print(f"Loading weights from checkpoint: {ckpt_path}")
@@ -790,7 +800,7 @@ class GemmaTEForCausalLM(nn.Module):
                 ),
                 strict=False,
             )
-        # Case 3: HuggingFace-style sharded weights
+        # Case 4: HuggingFace-style sharded weights
         elif os.path.isdir(model_path) and os.path.exists(os.path.join(model_path, 'pytorch_model.bin.index.json')):
             print(f"Loading weights from sharded files in: {model_path}")
             index_path = os.path.join(model_path, 'pytorch_model.bin.index.json')
@@ -805,7 +815,8 @@ class GemmaTEForCausalLM(nn.Module):
                 gc.collect()
         else:
             raise ValueError(f"Could not find model weights at {model_path}. Expected either a direct file, "
-                            f"a directory with '1/model.ckpt', or a directory with 'pytorch_model.bin.index.json'.")
+                            f"a directory with 'model.ckpt', a directory with '1/model.ckpt', "
+                            f"or a directory with 'pytorch_model.bin.index.json'.")
 
     def training_step(
         self, 
