@@ -771,14 +771,28 @@ class GemmaTEForCausalLM(nn.Module):
         return results[0] if is_str_prompt else results
 
     def load_weights(self, model_path: str):
+        # Case 1: Direct model file (e.g., finetuned checkpoint)
         if os.path.isfile(model_path):
+            print(f"Loading weights from direct file: {model_path}")
             self.load_state_dict(
                 torch.load(
                     model_path, mmap=True, weights_only=True,
                 )['model_state_dict'],
                 strict=False,
             )
-        else:
+        # Case 2: Check for directory structure like gemma-2-2b-it/1/model.ckpt
+        elif os.path.isdir(model_path) and os.path.exists(os.path.join(model_path, '1', 'model.ckpt')):
+            ckpt_path = os.path.join(model_path, '1', 'model.ckpt')
+            print(f"Loading weights from checkpoint: {ckpt_path}")
+            self.load_state_dict(
+                torch.load(
+                    ckpt_path, mmap=True, weights_only=True,
+                ),
+                strict=False,
+            )
+        # Case 3: HuggingFace-style sharded weights
+        elif os.path.isdir(model_path) and os.path.exists(os.path.join(model_path, 'pytorch_model.bin.index.json')):
+            print(f"Loading weights from sharded files in: {model_path}")
             index_path = os.path.join(model_path, 'pytorch_model.bin.index.json')
             with open(index_path, "r", encoding="utf-8") as f:
                 index = json.load(f)
@@ -789,6 +803,9 @@ class GemmaTEForCausalLM(nn.Module):
                 self.load_state_dict(state_dict, strict=False)
                 del state_dict  # Save memory.
                 gc.collect()
+        else:
+            raise ValueError(f"Could not find model weights at {model_path}. Expected either a direct file, "
+                            f"a directory with '1/model.ckpt', or a directory with 'pytorch_model.bin.index.json'.")
 
     def training_step(
         self, 

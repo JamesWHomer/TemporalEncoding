@@ -97,9 +97,21 @@ except Exception as e:
     print(f"Error downloading model weights: {e}")
 ```
 
+**Note**: The downloaded model will have the following directory structure:
+```
+weights_dir/
+└── 1/
+    ├── model.ckpt     (approximately 4.89GB)
+    ├── tokenizer.model
+    └── 1.complete
+```
+
+The `finetune.py` script has been updated to automatically find the model checkpoint inside this directory structure.
+
 **Troubleshooting**:
 - If you see authentication errors, check that your Kaggle credentials are correct
 - If the download fails, you may need to accept the model license on the Kaggle website first
+- You can verify the downloaded files with: `!ls -la {weights_dir}/1/`
 
 ## Step 6: Generate the Dataset
 
@@ -223,7 +235,8 @@ If you encounter GPU memory issues:
 If the model fails to load:
 
 1. Check that the weights directory path is correct
-2. Verify that all required files are present with `!ls -la {weights_dir}`
+2. Verify the actual directory structure: `!ls -la {weights_dir}` and `!ls -la {weights_dir}/1/`
+3. Make sure the model.ckpt file exists: `!ls -la {weights_dir}/1/model.ckpt`
 
 ## Saving Your Work
 

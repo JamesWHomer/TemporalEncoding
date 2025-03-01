@@ -65,6 +65,20 @@ import kagglehub
 try:
     weights_dir = kagglehub.model_download('google/gemma-2/pyTorch/gemma-2-2b-it')
     print(f"Model weights downloaded to: {weights_dir}")
+    
+    # Verify the model checkpoint exists in the expected location
+    # The model should be in a directory structure like:
+    # weights_dir/1/model.ckpt
+    expected_model_path = os.path.join(weights_dir, '1', 'model.ckpt')
+    if os.path.exists(expected_model_path):
+        print(f"Found model checkpoint at: {expected_model_path}")
+        print(f"Model size: {os.path.getsize(expected_model_path) / (1024 * 1024 * 1024):.2f} GB")
+    else:
+        print(f"WARNING: Model checkpoint not found at {expected_model_path}")
+        print("Directory contents:")
+        !ls -la {weights_dir}
+        if os.path.exists(os.path.join(weights_dir, '1')):
+            !ls -la {os.path.join(weights_dir, '1')}
 except Exception as e:
     print(f"Error downloading model weights: {e}")
     # Alternative manual download instructions
