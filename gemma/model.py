@@ -841,8 +841,8 @@ class GemmaTEForCausalLM(nn.Module):
         # Create positions tensor
         positions = torch.arange(0, seq_len, device=input_ids.device).expand(batch_size, -1)
         
-        # Get rotary embeddings
-        freqs_cis = self.freqs_cis.index_select(0, positions.view(-1))
+        # Get rotary embeddings - use contiguous().view instead of reshape to handle non-contiguous tensors
+        freqs_cis = self.freqs_cis.index_select(0, positions.contiguous().view(-1))
         freqs_cis = freqs_cis.view(batch_size, seq_len, -1)
         
         # Get embeddings with input ids
@@ -895,7 +895,8 @@ class GemmaTEForCausalLM(nn.Module):
         hidden_states = self.model(
             hidden_states=hidden_states,
             freqs_cis=freqs_cis,
-            kv_write_indices=positions.view(-1),
+            # Make positions contiguous explicitly before viewing
+            kv_write_indices=positions.contiguous().view(-1),
             kv_caches=kv_caches,
             mask=mask,
         )
