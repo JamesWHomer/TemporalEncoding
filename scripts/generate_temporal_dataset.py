@@ -24,7 +24,6 @@ import os
 import random
 from datetime import datetime, timedelta
 import time
-import calendar
 from typing import List, Dict, Tuple, Any
 
 # Define May 23, 2006 as the reference point
@@ -302,14 +301,6 @@ SPECIAL_DATE_RESPONSES = [
     "{special_date} is scheduled for {special_date_answer}.",
 ]
 
-def create_safe_date(year: int, month: int, day: int) -> datetime:
-    """Create a date safely, adjusting the day if it's out of range for the month."""
-    # Get the last day of the month
-    last_day = calendar.monthrange(year, month)[1]
-    # Adjust day if needed
-    adjusted_day = min(day, last_day)
-    return datetime(year, month, adjusted_day)
-
 def generate_random_datetime(start: datetime = REF_DATE, end: datetime = MAX_DATE) -> datetime:
     """Generate a random datetime between start and end"""
     delta = end - start
@@ -462,7 +453,7 @@ def generate_special_date_example(dt: datetime) -> Dict[str, str]:
     
     # If the special date has already passed this year, use next year
     if special_date_dt < dt:
-        special_date_dt = create_safe_date(year + 1, special_date_dt.month, special_date_dt.day)
+        special_date_dt = datetime(year + 1, special_date_dt.month, special_date_dt.day)
         question = f"When is the next {special_date_name}?"
     else:
         question = f"When is {special_date_name} this year?"

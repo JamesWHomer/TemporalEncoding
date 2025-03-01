@@ -24,7 +24,6 @@ import os
 import random
 from datetime import datetime, timedelta
 import time
-import calendar
 from typing import List, Dict, Any
 
 # Define May 23, 2006 as the reference point
@@ -159,14 +158,6 @@ TIMEZONES = [
 ]
 
 SEASONS_NORTH = ["Winter", "Spring", "Summer", "Fall"]
-
-def create_safe_date(year, month, day):
-    """Create a date safely, adjusting the day if it's out of range for the month."""
-    # Get the last day of the month
-    last_day = calendar.monthrange(year, month)[1]
-    # Adjust day if needed
-    adjusted_day = min(day, last_day)
-    return datetime(year, month, adjusted_day)
 
 def format_date(dt, format_type="full"):
     """Format a date in different formats based on the format_type"""
@@ -416,8 +407,7 @@ def generate_conversation_example(template_index=None):
     variables["next_milestone_age"] = next_milestone_age
     
     years_to_milestone = next_milestone_age - current_age
-    # Use safe date creation to avoid issues with invalid dates like Feb 29 in non-leap years
-    milestone_date = create_safe_date(birth_date.year + next_milestone_age, birth_date.month, birth_date.day)
+    milestone_date = datetime(birth_date.year + next_milestone_age, birth_date.month, birth_date.day)
     variables["milestone_date_full"] = format_date(milestone_date, "full")
     variables["days_to_milestone"] = (milestone_date - context_date).days
     
