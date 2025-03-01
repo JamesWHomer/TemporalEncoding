@@ -507,17 +507,13 @@ class GemmaTEModel(nn.Module):
 
         self.layers = nn.ModuleList()
         for i in range(config.num_hidden_layers):
-            if config.architecture == gemma_config.Architecture.GEMMA_1:
-                self.layers.append(GemmaTEDecoderLayer(config))
-            elif config.architecture == gemma_config.Architecture.GEMMA_2:
-                attn_type = (
-                    config.attn_types[i]
-                    if config.attn_types is not None
-                    else gemma_config.AttentionType.GLOBAL
-                )
-                self.layers.append(GemmaTE2DecoderLayer(config, attn_type))
-            else:
-                raise ValueError(f'Unknown architecture: {config.architecture}')
+            # All models now use GEMMA_2 architecture
+            attn_type = (
+                config.attn_types[i]
+                if config.attn_types is not None
+                else gemma_config.AttentionType.GLOBAL
+            )
+            self.layers.append(GemmaTE2DecoderLayer(config, attn_type))
         self.norm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
 
     def forward(
