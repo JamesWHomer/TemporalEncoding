@@ -19,11 +19,6 @@ setup(
     name="gemma",
     version="0.1",
     packages=find_packages(),
-    install_requires=[
-        "numpy==1.24.4",
-        "sentencepiece==0.1.99",
-        "torch",
-    ],
     description="GemmaTE: Temporal Encoding for Gemma 2b-v2",
     author="",
     author_email="",

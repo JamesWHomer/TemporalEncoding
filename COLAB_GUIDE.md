@@ -16,7 +16,7 @@ This guide provides detailed instructions for setting up, fine-tuning, and runni
    - Select **GPU** as the hardware accelerator
    - Click **Save**
 
-## Step 2: Clone the Repository and Set Up the Environment
+## Step 2: Clone the Repository
 
 Copy and paste this into a Colab cell, then run it:
 
@@ -25,8 +25,8 @@ Copy and paste this into a Colab cell, then run it:
 !git clone https://github.com/JamesWHomer/TemporalEncoding.git
 %cd TemporalEncoding
 
-# Install dependencies
-!pip install -q -U torch immutabledict sentencepiece kagglehub
+# Note: You may need to install necessary packages depending on your environment
+# The specific packages required are not listed here to give you flexibility
 ```
 
 ## Step 3: Create a setup.py File
@@ -41,11 +41,6 @@ setup(
     name="gemma",
     version="0.1",
     packages=find_packages(),
-    install_requires=[
-        "numpy==1.24.4",
-        "sentencepiece==0.1.99",
-        "torch",
-    ],
     description="GemmaTE: Temporal Encoding for Gemma 2b-v2",
 )
 
@@ -88,9 +83,10 @@ print("Kaggle credentials set manually")
 
 ## Step 5: Download Model Weights
 
-Download the pre-trained Gemma weights using kagglehub:
+Download the pre-trained Gemma weights:
 
 ```python
+# Note: You'll need to have the kagglehub package installed
 import kagglehub
 
 # Load model weights
@@ -228,7 +224,6 @@ If the model fails to load:
 
 1. Check that the weights directory path is correct
 2. Verify that all required files are present with `!ls -la {weights_dir}`
-3. Try reinstalling sentencepiece with the specific version: `!pip install sentencepiece==0.1.99`
 
 ## Saving Your Work
 
