@@ -172,6 +172,9 @@ class Linear(nn.Module):
         weight = self.weight
         if self.quant:
             weight = weight * self.weight_scaler.unsqueeze(-1)
+        # Ensure input x has the same dtype as weight
+        if x.dtype != weight.dtype:
+            x = x.to(weight.dtype)
         output = F.linear(x, weight)
         return output
 
@@ -197,6 +200,9 @@ class Embedding(nn.Module):
         weight = self.weight
         if self.quant:
             weight = weight * self.weight_scaler.unsqueeze(-1)
+        # Ensure input x has compatible dtype with weight for embedding
+        if x.dtype not in (torch.int64, torch.int32, torch.int16, torch.int8):
+            x = x.to(torch.int64)  # Convert to long for embedding indices
         output = F.embedding(x, weight)
         return output
 
@@ -836,6 +842,7 @@ class GemmaTEForCausalLM(nn.Module):
         Returns:
             Dictionary containing the loss and logits
         """
+        dtype = self.config.get_dtype()
         batch_size, seq_len = input_ids.shape
         
         # Create positions tensor
@@ -847,7 +854,7 @@ class GemmaTEForCausalLM(nn.Module):
         
         # Get embeddings with input ids
         hidden_states = self.embedder(input_ids)
-        normalizer = torch.tensor(self.config.hidden_size**0.5, dtype=hidden_states.dtype)
+        normalizer = torch.tensor(self.config.hidden_size**0.5, dtype=dtype)
         hidden_states = hidden_states * normalizer
         
         # Apply temporal encoding if timestamps are provided
@@ -866,8 +873,16 @@ class GemmaTEForCausalLM(nn.Module):
             temporal_embedding = temporal_embedding.unsqueeze(1)
             temporal_embedding = temporal_embedding.expand(-1, seq_len, -1)
             
+            # Ensure consistent dtype
+            if temporal_embedding.dtype != dtype:
+                temporal_embedding = temporal_embedding.to(dtype)
+                
             # Add temporal embeddings to token embeddings
             hidden_states = hidden_states + temporal_embedding
+            
+        # Ensure hidden_states has the correct dtype
+        if hidden_states.dtype != dtype:
+            hidden_states = hidden_states.to(dtype)
             
         # Create causal attention mask
         mask = torch.triu(torch.full((seq_len, seq_len), -float('inf'), device=input_ids.device), diagonal=1)
@@ -882,11 +897,14 @@ class GemmaTEForCausalLM(nn.Module):
         else:
             mask = mask.unsqueeze(0)
             
+        # Ensure mask has the right dtype
+        if mask.dtype != dtype and mask.dtype != torch.bool:
+            mask = mask.to(dtype)
+            
         # Build temporary KV caches for training
         kv_caches = []
         for _ in range(self.config.num_hidden_layers):
             size = (batch_size, seq_len, self.config.num_key_value_heads, self.config.head_dim)
-            dtype = self.config.get_dtype()
             k_cache = torch.zeros(size=size, dtype=dtype, device=input_ids.device)
             v_cache = torch.zeros(size=size, dtype=dtype, device=input_ids.device)
             kv_caches.append((k_cache, v_cache))
@@ -901,10 +919,18 @@ class GemmaTEForCausalLM(nn.Module):
             mask=mask,
         )
         
+        # Ensure hidden_states has the correct dtype after model forward pass
+        if hidden_states.dtype != dtype:
+            hidden_states = hidden_states.to(dtype)
+        
         # Get logits
         embedder_weight = self.embedder.weight
         if self.config.quant:
             embedder_weight = embedder_weight * self.embedder.weight_scaler.unsqueeze(-1)
+            
+        # Ensure embedder_weight has the correct dtype
+        if embedder_weight.dtype != dtype:
+            embedder_weight = embedder_weight.to(dtype)
             
         logits = torch.matmul(hidden_states, embedder_weight.t())
         
@@ -931,6 +957,11 @@ class GemmaTEForCausalLM(nn.Module):
             if active_mask.sum() > 0:
                 active_logits = shift_logits[active_mask]
                 active_labels = shift_labels[active_mask]
+                
+                # Ensure logits have the right dtype for loss calculation
+                if active_logits.dtype != torch.float32:
+                    active_logits = active_logits.float()
+                    
                 loss = loss_fct(active_logits, active_labels)
             else:
                 loss = torch.tensor(0.0, device=logits.device)
