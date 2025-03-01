@@ -19,6 +19,7 @@ import contextlib
 import os
 import random
 import time
+import json
 from datetime import datetime
 from typing import Optional, Dict, List, Tuple
 
@@ -131,28 +132,53 @@ def _set_default_tensor_type(dtype: torch.dtype):
     torch.set_default_dtype(torch.float)
 
 
-def get_sample_data(num_samples: int = 10) -> Tuple[List[str], List[int]]:
-    """Get sample data for fine-tuning."""
+def load_dataset_from_file(data_file: str, limit: Optional[int] = None) -> Tuple[List[str], List[int]]:
+    """Load dataset from a JSONL file."""
     
-    # Sample texts - this would be replaced with your actual data
-    texts = [
-        "The quick brown fox jumps over the lazy dog.",
-        "Fine-tuning language models requires careful attention to hyperparameters.",
-        "GemmaTE incorporates temporal encoding to help models understand time.",
-        "Transformer models have revolutionized natural language processing.",
-        "Deep learning has enabled significant advances in AI capabilities.",
-    ] * 2  # Duplicate to meet num_samples
+    texts = []
+    timestamps = []
     
-    texts = texts[:num_samples]
+    print(f"Loading data from {data_file}...")
     
-    # Create timestamps at different intervals (one day apart)
-    current_time_ms = int(time.time() * 1000)
-    day_ms = 24 * 60 * 60 * 1000
-    timestamps = [current_time_ms - (i * day_ms) for i in range(len(texts))]
+    try:
+        with open(data_file, 'r', encoding='utf-8') as f:
+            count = 0
+            for line in f:
+                example = json.loads(line.strip())
+                
+                # Extract prompt and response
+                prompt = example.get('prompt', '')
+                response = example.get('response', '')
+                
+                # For conversation format
+                if 'conversation' in example:
+                    conversation = ''
+                    for turn in example['conversation']:
+                        role = turn.get('role', '')
+                        content = turn.get('content', '')
+                        conversation += f"{role}: {content}\n"
+                    text = conversation.strip()
+                else:
+                    # Combine prompt and response
+                    text = f"{prompt}\n{response}"
+                
+                # Extract timestamp
+                timestamp = example.get('timestamp_ms', int(time.time() * 1000))
+                
+                texts.append(text)
+                timestamps.append(timestamp)
+                
+                count += 1
+                if limit and count >= limit:
+                    break
+    except Exception as e:
+        print(f"Error loading dataset: {e}")
+        raise
     
     # Log the timestamps relative to May 23, 2006
+    print(f"Loaded {len(texts)} examples from dataset")
     print("Sample data timestamps:")
-    for i, ts in enumerate(timestamps):
+    for i, ts in enumerate(timestamps[:5]):  # Show first 5 only
         timestamp_dt = datetime.fromtimestamp(ts / 1000)
         days_since_reference = (ts - MAY_23_2006_MS) / (24 * 60 * 60 * 1000)
         if days_since_reference >= 0:
@@ -190,9 +216,8 @@ def finetune(args):
     
     print("GemmaTE 2b-v2 model loading complete")
     
-    # In a real implementation, you'd load your dataset here
-    # For demonstration, we'll use some sample data
-    texts, timestamps = get_sample_data(args.num_samples)
+    # Load dataset from file
+    texts, timestamps = load_dataset_from_file(args.data_file, args.num_examples)
     
     # Create dataset and dataloader
     dataset = TextDataset(
@@ -335,8 +360,10 @@ if __name__ == "__main__":
                        help="Scale parameter for temporal encoding (tau)")
     
     # Dataset parameters
-    parser.add_argument("--num_samples", type=int, default=10,
-                       help="Number of sample texts to use (for demonstration)")
+    parser.add_argument("--data_file", type=str, required=True,
+                       help="Path to the JSONL dataset file")
+    parser.add_argument("--num_examples", type=int, default=None,
+                       help="Maximum number of examples to use from the dataset (None for all)")
     parser.add_argument("--max_length", type=int, default=128,
                        help="Maximum sequence length")
     
