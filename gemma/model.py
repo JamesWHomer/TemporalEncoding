@@ -48,6 +48,11 @@ class Sampler(nn.Module):
         # (batch_size, input_len, hidden_size) -> (batch_size, hidden_size)
         hidden_states = hidden_states.index_select(
             1, output_positions).squeeze(dim=1)
+            
+        # Ensure hidden_states and embedding have the same dtype before matmul
+        if hidden_states.dtype != embedding.dtype:
+            hidden_states = hidden_states.to(embedding.dtype)
+            
         logits = torch.matmul(hidden_states, embedding.t())
         if embedding_bias is not None:
             logits += embedding_bias
@@ -694,6 +699,9 @@ class GemmaTEForCausalLM(nn.Module):
 
         batch_size = len(prompts)
         
+        # Get the model's configured dtype
+        dtype = self.config.get_dtype()
+        
         # Process timestamps if provided
         if timestamps is not None:
             if isinstance(timestamps, list):
@@ -708,10 +716,14 @@ class GemmaTEForCausalLM(nn.Module):
             # Ensure timestamps tensor has the correct shape [batch_size]
             if timestamps.shape[0] != batch_size:
                 raise ValueError(f"Expected timestamps for {batch_size} prompts, got {timestamps.shape[0]}")
+            
+            # Ensure timestamps has the right dtype
+            if timestamps.dtype != torch.long:
+                timestamps = timestamps.to(torch.long)
         else:
             # If no timestamps provided, use current time (milliseconds since epoch)
             current_time_ms = int(time.time() * 1000)
-            timestamps = torch.tensor([current_time_ms] * batch_size, device=device)
+            timestamps = torch.tensor([current_time_ms] * batch_size, device=device, dtype=torch.long)
             
         prompt_tokens = [self.tokenizer.encode(prompt) for prompt in prompts]
         min_prompt_len = min(len(p) for p in prompt_tokens)
@@ -724,7 +736,6 @@ class GemmaTEForCausalLM(nn.Module):
         for _ in range(self.config.num_hidden_layers):
             size = (batch_size, max_seq_len, self.config.num_key_value_heads,
                     self.config.head_dim)
-            dtype = self.config.get_dtype()
             k_cache = torch.zeros(size=size, dtype=dtype, device=device)
             v_cache = torch.zeros(size=size, dtype=dtype, device=device)
             kv_caches.append((k_cache, v_cache))
@@ -745,14 +756,14 @@ class GemmaTEForCausalLM(nn.Module):
         input_positions_tensor = torch.arange(0, min_prompt_len,
                                               dtype=torch.int64).to(device)
         mask_tensor = torch.full((1, 1, max_seq_len, max_seq_len),
-                                 -2.3819763e38).to(torch.float)
-        mask_tensor = torch.triu(mask_tensor, diagonal=1).to(device)
+                                 -2.3819763e38, dtype=dtype).to(device)
+        mask_tensor = torch.triu(mask_tensor, diagonal=1)
         curr_mask_tensor = mask_tensor.index_select(2, input_positions_tensor)
         output_positions_tensor = torch.LongTensor([min_prompt_len - 1]).to(
             device)
         temperatures_tensor = None if not temperature else torch.FloatTensor(
-            [temperature] * batch_size).to(device)
-        top_ps_tensor = torch.FloatTensor([top_p] * batch_size).to(device)
+            [temperature] * batch_size).to(device).to(dtype)
+        top_ps_tensor = torch.FloatTensor([top_p] * batch_size).to(device).to(dtype)
         top_ks_tensor = torch.LongTensor([top_k] * batch_size).to(device)
         output_index = torch.tensor(min_prompt_len, dtype=torch.int64).to(
             device)
@@ -885,6 +896,10 @@ class GemmaTEForCausalLM(nn.Module):
         
         # Apply temporal encoding if timestamps are provided
         if timestamps is not None:
+            # Ensure timestamps has the right dtype
+            if timestamps.dtype != torch.long:
+                timestamps = timestamps.to(torch.long)
+                
             temporal_embedding = compute_temporal_encoding(
                 timestamps, 
                 self.temporal_encoding_dim,
@@ -984,13 +999,14 @@ class GemmaTEForCausalLM(nn.Module):
                 active_logits = shift_logits[active_mask]
                 active_labels = shift_labels[active_mask]
                 
-                # Ensure logits have the right dtype for loss calculation
+                # Always use float32 for loss calculation (needed by CrossEntropyLoss)
                 if active_logits.dtype != torch.float32:
                     active_logits = active_logits.float()
                     
                 loss = loss_fct(active_logits, active_labels)
             else:
-                loss = torch.tensor(0.0, device=logits.device)
+                # Create a zero loss tensor with the appropriate device
+                loss = torch.tensor(0.0, device=logits.device, dtype=torch.float32)
                 
         return {
             "loss": loss,
